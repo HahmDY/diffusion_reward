@@ -1,0 +1,1 @@
+python scripts/train_vqdiffusion.py dataset@_global_=furniture_lamp ++dataset=furniture

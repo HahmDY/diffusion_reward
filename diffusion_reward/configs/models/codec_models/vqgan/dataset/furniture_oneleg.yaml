@@ -1,0 +1,11 @@
+# Env
+domain: furniture_oneleg
+
+# Model
+channels: [128, 256, 256]
+latent_size: 16
+
+# Training
+device: cuda:5
+batch_size: 64
+epochs: 256

@@ -1,0 +1,14 @@
+# env
+domain: furniture_oneleg
+
+#model
+codec:
+  channels: [128, 256, 256]
+  latent_size: 16
+  device: cuda:5
+
+num_frames: 4
+frame_skip: 16
+device: cuda:5
+latent_size: 16
+epochs: 500
