@@ -18,7 +18,7 @@ import scipy
 
 config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_oneleg.yaml'
 train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_oneleg/low/train'
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
+pkl_dir = '/home/dongyoon/FB_dataset/raw/low/one_leg/train'
 
 class CustomVIPER(nn.Module):
     def __init__(self, cfg):
@@ -142,6 +142,8 @@ with open(config_path, 'r') as file:
 reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
     reward_model = reward_model.to('cuda:6')
+    reward_model.model = reward_model.model.to('cuda:6')
+    reward_model.model.transformer = reward_model.model.transformer.to('cuda:6')
     reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:6')
     
 def process_pkl(pkl_path, indices):
@@ -236,8 +238,8 @@ for folder in subfolders:
     last_idx = 100
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 20:
-            start_idx -= 20
+        if last_frame-start_idx < 100:
+            start_idx -= 100
         selected_frames = combined_array[start_idx:last_frame]
         frames = process_frames(selected_frames)
         reward = reward_model.calc_reward(frames)

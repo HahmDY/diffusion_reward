@@ -32,7 +32,7 @@ sos_token: 0
 num_frames: 2
 frame_skip: 1
 use_vqemb: true
-device: cuda
+device: cuda:6
 
 # training
 image_size: 64
