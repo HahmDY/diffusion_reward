@@ -13,7 +13,7 @@ video_model: vqdiffusion
 pretrain_rm: true
 ckpt_path: /home/dongyoon/diffusion_reward/exp_local/video_models/vqdiffusion/furniture_oneleg/checkpoint/best.pth
 cfg_path:  /home/dongyoon/diffusion_reward/exp_local/video_models/vqdiffusion/furniture_oneleg/.hydra/config.yaml
-stat_path: /home/dongyoon/diffusion_reward/diffusion_reward/models/reward_models/statistics/diffusion_reward/entropy/adroit.yaml
+stat_path: diffusion_reward/models/reward_models/statistics/diffusion_reward/entropy/adroit.yaml
 
 reward_type: entropy
 skip_step: 9

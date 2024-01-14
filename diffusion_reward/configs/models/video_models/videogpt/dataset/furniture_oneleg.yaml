@@ -5,10 +5,10 @@ domain: furniture_oneleg
 codec:
   channels: [128, 256, 256]
   latent_size: 16
-  device: cuda:6
+  device: cuda
 
 num_frames: 4
 frame_skip: 16
-device: cuda:6
+device: cuda
 latent_size: 16
 epochs: 500

@@ -9,6 +9,7 @@ from .encoder import Encoder
 class VQGAN(nn.Module):
     def __init__(self, args):
         super(VQGAN, self).__init__()
+        
         self.encoder = Encoder(args).to(device=args.device)
         self.decoder = Decoder(args).to(device=args.device)
         self.codebook = Codebook(args).to(device=args.device)
