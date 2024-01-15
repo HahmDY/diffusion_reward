@@ -139,52 +139,32 @@ class CustomVIPER(nn.Module):
 with open(config_path, 'r') as file:
     config = yaml.safe_load(file)
     config = SimpleNamespace(**config)
+    
 reward_model = CustomVIPER(config)
+
 if torch.cuda.is_available():
     reward_model = reward_model.to('cuda:6')
     reward_model.model = reward_model.model.to('cuda:6')
     reward_model.model.transformer = reward_model.model.transformer.to('cuda:6')
     reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:6')
-    
-def process_pkl(pkl_path, indices):
-    with open(pkl_path, 'rb') as file:
-        data = pickle.load(file)
-    
-    frames = []
-    for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
-        
-    frames = np.array(frames)
-    
-    if indices is not None:
-        frames = frames[indices]
-    
-    frames = np.expand_dims(frames, axis=0) # dim 0 for batch
-    frames = frames.astype(np.float32)
-    frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:6')
-    return frames
 
-def pkl2frames(pkl_path):
+def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
         data = pickle.load(file)
     frames = []
     for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
+        frames.append(data['observations'][i]['color_image2'])
     frames = np.array(frames)
+    frames = frames.transpose(0, 2, 3, 1)
+    frames_resized = []
+    for j, frame in enumerate(frames):
+        frame = Image.fromarray(frame)
+        frame = frame.resize((64, 64)) # resize to 64x64
+        frames_resized.append(np.array(frame))
+    frames = np.array(frames_resized)    
     return frames
 
-def process_frames(frames):
+def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
@@ -275,16 +255,8 @@ for i, filename in enumerate(os.listdir(pkl_dir)):
         pkl_file_path = os.path.join(pkl_dir, filename)
         with open(pkl_file_path, 'rb') as file:
             data = pickle.load(file)
-        frames = []
-        for i in range(len(data['observations'])):
-            frame = data['observations'][i]['color_image2']
-            frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-            img = Image.fromarray(frame)
-            resized_img = img.resize((64, 64))
-            frame = np.array(resized_img)
-            frames.append(frame)
-        frames = np.array(frames)
-        
+            
+        frames = pkl2frames(pkl_file_path)
         rewards = extract_reward_100(frames, reward_model)
         len_frames = frames.shape[0]
         
@@ -304,8 +276,8 @@ for i, filename in enumerate(os.listdir(pkl_dir)):
         assert len_frames == rewards.shape[0]
         assert len_frames == viper_stacked_timesteps.shape[0]
         
-        data['viper_reward'] = reward_std
-        data['viper_stacked_timesteps'] = viper_stacked_timesteps
+        data['viper_reward_16'] = reward_std
+        data['viper_stacked_timesteps_16'] = viper_stacked_timesteps
         
         with open(pkl_file_path, 'wb') as file:
             pickle.dump(data, file)

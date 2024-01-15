@@ -257,43 +257,21 @@ reward_model = Custom_DiffusionReward(config)
 if torch.cuda.is_available():
     reward_model = reward_model.to('cuda:6')
     reward_model.model.content_codec.to('cuda:7')
-    
-def process_pkl(pkl_path, indices):
-    with open(pkl_path, 'rb') as file:
-        data = pickle.load(file)
-    
-    frames = []
-    for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
-        
-    frames = np.array(frames)
-    
-    if indices is not None:
-        frames = frames[indices]
-    
-    frames = np.expand_dims(frames, axis=0) # dim 0 for batch
-    frames = frames.astype(np.float32)
-    frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:7')
-    return frames
 
-def pkl2frames(pkl_path):
+def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
         data = pickle.load(file)
     frames = []
     for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
+        frames.append(data['observations'][i]['color_image2'])
     frames = np.array(frames)
+    frames = frames.transpose(0, 2, 3, 1)
+    frames_resized = []
+    for j, frame in enumerate(frames):
+        frame = Image.fromarray(frame)
+        frame = frame.resize((64, 64)) # resize to 64x64
+        frames_resized.append(np.array(frame))
+    frames = np.array(frames_resized)    
     return frames
 
 def process_frames(frames):
@@ -334,31 +312,11 @@ for i, filename in enumerate(os.listdir(pkl_dir)):
         pkl_file_path = os.path.join(pkl_dir, filename)
         with open(pkl_file_path, 'rb') as file:
             data = pickle.load(file)
-        frames = []
-        for i in range(len(data['observations'])):
-            frame = data['observations'][i]['color_image2']
-            frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-            img = Image.fromarray(frame)
-            resized_img = img.resize((64, 64))
-            frame = np.array(resized_img)
-            frames.append(frame)
-        frames = np.array(frames)
-        
+            
+        frames = pkl2frames(pkl_file_path)
         rewards = extract_reward_100(frames, reward_model)
         len_frames = frames.shape[0]
-        frames1 = frames[:400]
-        frames2 = frames[398:]
-        
-        frames1 = process_frames(frames1)
-        rewards1 = reward_model.calc_reward(frames1)
-        rewards1 = rewards1.cpu().numpy().squeeze()
-        
-        frames2 = process_frames(frames2)
-        rewards2 = reward_model.calc_reward(frames2)
-        rewards2 = rewards2.cpu().numpy().squeeze()
-        
-        rewards = np.concatenate((rewards1, rewards2[2:]))
-        
+
         reward_std = (rewards - mean) / std
         reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
         

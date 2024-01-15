@@ -141,44 +141,6 @@ reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
     reward_model = reward_model.to('cuda:6')
     reward_model.model.vqgan.to('cuda:6')
-    
-def process_pkl(pkl_path, indices):
-    with open(pkl_path, 'rb') as file:
-        data = pickle.load(file)
-    
-    frames = []
-    for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
-        
-    frames = np.array(frames)
-    
-    if indices is not None:
-        frames = frames[indices]
-    
-    frames = np.expand_dims(frames, axis=0) # dim 0 for batch
-    frames = frames.astype(np.float32)
-    frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:6')
-    return frames
-
-def pkl2frames(pkl_path):
-    with open(pkl_path, 'rb') as file:
-        data = pickle.load(file)
-    frames = []
-    for i in range(len(data['observations'])):
-        frame = data['observations'][i]['color_image2']
-        frame = np.transpose(frame, (1, 2, 0)) # chw -> hwc
-        img = Image.fromarray(frame)
-        resized_img = img.resize((64, 64))
-        frame = np.array(resized_img)
-        frames.append(frame)
-    frames = np.array(frames)
-    return frames
 
 def process_frames(frames):
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
@@ -228,34 +190,16 @@ for folder in subfolders:
         
     combined_array = np.stack(images)
     demo_len = combined_array.shape[0]
-    reward_traj = np.zeros(0)
-    start_idx = 0
-    prev_last_idx = 0
-    last_idx = 100
-    while start_idx <= combined_array.shape[0]:
-        last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 20:
-            start_idx -= 20
-        selected_frames = combined_array[start_idx:last_frame]
-        frames = process_frames(selected_frames)
-        reward = reward_model.calc_reward(frames)
-        reward = reward.cpu().numpy().squeeze()
-        
-        reward = reward[prev_last_idx-start_idx:]
-        reward_traj = np.concatenate((reward_traj, reward))
-        
-        start_idx = last_idx - 20
-        prev_last_idx = last_idx
-        last_idx = start_idx + 100
+    reward = extract_reward_100(combined_array, reward_model)
     print("demolen:", combined_array.shape[0])
-    print("reward:", len(reward_traj))
+    print("reward:", len(reward))
     # frames = process_frames(combined_array)
     # reward_traj = reward_model.calc_reward(frames)
     # reward_traj = reward_traj.cpu().numpy().squeeze()
     
-    assert len(reward_traj) == demo_len
+    assert len(reward) == demo_len
     
-    total_reward = np.concatenate((total_reward, reward_traj))
+    total_reward = np.concatenate((total_reward, reward))
 mean_reward = np.mean(total_reward)
 std_reward = np.std(total_reward)
 print("mean reward:", mean_reward)

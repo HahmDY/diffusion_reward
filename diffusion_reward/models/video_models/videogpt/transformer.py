@@ -25,8 +25,10 @@ class VideoGPTTransformer(nn.Module):
         args.codec.checkpoint_path = str(Path(__file__).parents[4]) + args.codec.checkpoint_path
         # diffusion_reward + /exp_local/codec_models/vqgan/${domain}/results/checkpoints/vqgan.pt
         model = VQGAN(args.codec)
+        device = args.device
+        #model.load_checkpoint_device(args.codec.checkpoint_path, device)
         model.load_checkpoint(args.codec.checkpoint_path)
-        model = model.eval()
+        model = model.eval().to(device)
         return model
 
     @torch.no_grad()

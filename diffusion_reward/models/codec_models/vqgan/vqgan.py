@@ -9,7 +9,6 @@ from .encoder import Encoder
 class VQGAN(nn.Module):
     def __init__(self, args):
         super(VQGAN, self).__init__()
-        
         self.encoder = Encoder(args).to(device=args.device)
         self.decoder = Decoder(args).to(device=args.device)
         self.codebook = Codebook(args).to(device=args.device)
@@ -53,3 +52,6 @@ class VQGAN(nn.Module):
 
     def load_checkpoint(self, path):
         self.load_state_dict(torch.load(path))
+        
+    def load_checkpoint_device(self, path, device):
+        self.load_state_dict(torch.load(path, map_location=device))
