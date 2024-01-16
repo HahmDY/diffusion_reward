@@ -6,11 +6,11 @@ model:
   params:
     content_info: {key: image}
     condition_info: {key: frame}
-    frame_skip: 1
+    frame_skip: 16
     content_codec_config: 
       target: diffusion_reward.models.video_models.vqdiffusion.modeling.codecs.image_codec.vqgan.MiniVQGAN
       params:
-        args: {latent_dim: 64, device: 'cuda:5', image_channels: 3, num_codebook_vectors: 1024, beta: 0.25, channels: [128, 256, 256], resolution: 64, latent_size: 16}
+        args: {latent_dim: 64, device: 'cuda:6', image_channels: 3, num_codebook_vectors: 1024, beta: 0.25, channels: [128, 256, 256], resolution: 64, latent_size: 16}
         trainable: False
         token_shape: [16, 16]
         #config_path: 'OUTPUT/pretrained_model/taming_dvae/vqgan_imagenet_f16_16384.yaml'
@@ -54,7 +54,7 @@ model:
             embed_dim: 1024
             identity: false
             trainable: true
-            num_cond_frames: 2
+            num_cond_frames: 4
         content_emb_config:
           target: diffusion_reward.models.video_models.vqdiffusion.modeling.embeddings.dalle_mask_image_embedding.DalleMaskImageEmbedding
           params:

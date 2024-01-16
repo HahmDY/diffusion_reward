@@ -16,9 +16,9 @@ import matplotlib.pyplot as plt
 import os
 import scipy
 
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_oneleg.yaml'
-train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_oneleg/low/train'
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/one_leg/train'
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp.yaml'
+train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_lamp/low/train'
+pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
 
 class CustomVIPER(nn.Module):
     def __init__(self, cfg):
@@ -42,30 +42,52 @@ class CustomVIPER(nn.Module):
             imgs: B * T * H * W * C
             (mostly): 1 * T * ...
         '''
-        seq_len = x.shape[1]
+        seq_len = x.shape[1] # T
         num_frames = self.model_cfg.num_frames + 1
         n_skip = self.model_cfg.frame_skip
-        subseq_len = num_frames * n_skip
+        subseq_len = self.model_cfg.num_frames * n_skip # 4 * 16 = 64
 
         x = x.permute(0, 1, 4, 2 ,3) # B * T * C * H * W
         embs, indices = self.model.encode_to_z(x) 
-        indices = indices.reshape(indices.shape[0], seq_len, -1)
-        embs = embs.reshape(embs.shape[0], seq_len, indices.shape[-1], -1)
+        indices = indices.reshape(indices.shape[0], seq_len, -1) # [1, T, 256]
+        embs = embs.reshape(embs.shape[0], seq_len, indices.shape[-1], -1) # [1, T, 256, 64]
         
         if reward_type == 'likelihood':
-            post_idxes = list(range(seq_len - subseq_len + 1))
-            batch_indices = [indices[:, idx:idx+subseq_len:n_skip] for idx in post_idxes]
+            post_idxes = list(range(seq_len - subseq_len)) # T - 64
+            
+            #batch_indices = [indices[:, idx:idx+subseq_len+n_skip:n_skip] for idx in post_idxes] # T, T+16, T+32, T+48, T+64, post_idxes:0~T-64
+            batch_indices = []
+            for idx in post_idxes:
+                idx_idx = [idx+n_skip, idx+2*n_skip, idx+3*n_skip, idx+4*n_skip, min(idx+5*n_skip, seq_len-1)]
+                batch_indices.append(indices[:, idx_idx])
+            # [1, 5, 256]
             batch_indices = torch.stack(batch_indices, dim=0)
-            batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1)
-            batch_embs = [embs[:, idx:idx+subseq_len:n_skip] for idx in post_idxes]
-            batch_embs = torch.stack(batch_embs, dim=0)
-            batch_embs = batch_embs.squeeze(1).reshape(batch_embs.shape[0], -1, batch_embs.shape[-1])
+            batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1) # [1280]
+            
+            #batch_embs = [embs[:, idx:idx+subseq_len+n_skip:n_skip] for idx in post_idxes]
+            batch_embs = []
+            for idx in post_idxes:
+                idx_idx = [idx+n_skip, idx+2*n_skip, idx+3*n_skip, idx+4*n_skip, min(idx+5*n_skip, seq_len-1)]
+                batch_embs.append(embs[:, idx_idx])
+            # [64, 1280]
+            batch_embs = torch.stack(batch_embs, dim=0) # [36, 1, 5, 256, 64]
+            batch_embs = batch_embs.squeeze(1).reshape(batch_embs.shape[0], -1, batch_embs.shape[-1]) # [36, 1280, 64]
+            
+            pre_batch_indices = []
+            for idx in range(subseq_len):
+                idx_idx = [max(idx-3*n_skip, 0),max(idx-2*n_skip, 0),max(idx-1*n_skip, 0),idx,min(idx+n_skip, seq_len-1)]
+                pre_batch_indice = torch.cat([indices[:, idx_idx[0]], indices[:, idx_idx[1]], indices[:, idx_idx[2]], indices[:, idx_idx[3]], indices[:, idx_idx[4]]], dim=1)
+                pre_batch_indices.append(pre_batch_indice)
+            #pre_batch_indices = [indices[:, min(idx+n_skip, seq_len-1)].tile((1, num_frames)) for idx in range(subseq_len)] # 64 * [1280]
+            pre_batch_indices = torch.concat(pre_batch_indices, dim=0) # [64, 1280]
+            batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0) # [128, 1280]
 
-            pre_batch_indices = [indices[:, idx].tile((1, num_frames)) for idx in range(subseq_len-1)]
-            pre_batch_indices = torch.concat(pre_batch_indices, dim=0)
-            batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0)
-
-            pre_batch_embs = [embs[:, idx].tile((1, num_frames, 1)) for idx in range(subseq_len-1)]
+            pre_batch_embs = []
+            for idx in range(subseq_len):
+                idx_idx = [max(idx-3*n_skip, 0),max(idx-2*n_skip, 0),max(idx-1*n_skip, 0),idx,min(idx+n_skip, seq_len-1)]
+                pre_batch_emb = torch.cat([embs[:, idx_idx[0]], embs[:, idx_idx[1]], embs[:, idx_idx[2]], embs[:, idx_idx[3]], embs[:, idx_idx[4]]], dim=1)
+                pre_batch_embs.append(pre_batch_emb)
+            #pre_batch_embs = [embs[:, min(idx+n_skip, seq_len-1)].tile((1, num_frames, 1)) for idx in range(subseq_len)]
             pre_batch_embs = torch.concat(pre_batch_embs, dim=0)
             batch_embs = torch.concat([pre_batch_embs, batch_embs], dim=0)
         elif reward_type == 'entropy':
@@ -92,9 +114,10 @@ class CustomVIPER(nn.Module):
     @torch.no_grad()
     def calc_reward(self, imgs):
         batch_embs, batch_indices = self.imgs_to_batch(imgs, self.reward_type)
-        batch_embs = batch_embs.to('cuda:6')
-        batch_indices = batch_indices.to('cuda:6')
+        batch_embs = batch_embs.to('cuda:5')
+        batch_indices = batch_indices.to('cuda:5')
         sos_tokens = self.model.calc_sos_tokens(imgs, batch_embs).tile((batch_embs.shape[0], 1, 1))
+        sos_tokens = sos_tokens.to('cuda:5')
 
         rewards = self.cal_log_prob(batch_embs, batch_indices, sos_tokens, target_indices=batch_indices, reward_type=self.reward_type)
         return rewards  
@@ -106,7 +129,7 @@ class CustomVIPER(nn.Module):
             x = torch.cat((c, x), dim=1) if x is not None else c   
         else:
             x = torch.cat((c, embs), dim=1) if x is not None else c
-
+            
         logits, _ = self.model.transformer(x[:, :-1])
         probs = F.log_softmax(logits, dim=-1)
 
@@ -139,14 +162,12 @@ class CustomVIPER(nn.Module):
 with open(config_path, 'r') as file:
     config = yaml.safe_load(file)
     config = SimpleNamespace(**config)
-    
 reward_model = CustomVIPER(config)
-
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:6')
-    reward_model.model = reward_model.model.to('cuda:6')
-    reward_model.model.transformer = reward_model.model.transformer.to('cuda:6')
-    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:6')
+    reward_model = reward_model.to('cuda:5')
+    reward_model.model = reward_model.model.to('cuda:5')
+    reward_model.model.transformer = reward_model.model.transformer.to('cuda:5')
+    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:5')
 
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
@@ -155,7 +176,7 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     for i in range(len(data['observations'])):
         frames.append(data['observations'][i]['color_image2'])
     frames = np.array(frames)
-    frames = frames.transpose(0, 2, 3, 1)
+    frames = frames.transpose(0, 2, 3, 1) # T * C * H * W -> T * H * W * C
     frames_resized = []
     for j, frame in enumerate(frames):
         frame = Image.fromarray(frame)
@@ -164,11 +185,11 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     frames = np.array(frames_resized)    
     return frames
 
-def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W
+def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W, tensor
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:6')
+    frames = torch.from_numpy(frames).float().to('cuda:5')
     return frames
 
 def extract_reward_100(combined_array, reward_model):
@@ -178,44 +199,7 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 100
-    while start_idx <= combined_array.shape[0]:
-        last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 20:
-            start_idx -= 20
-        selected_frames = combined_array[start_idx:last_frame]
-        frames = process_frames(selected_frames)
-        reward = reward_model.calc_reward(frames)
-        reward = reward.cpu().numpy().squeeze()
-        
-        reward = reward[prev_last_idx-start_idx:]
-        reward_traj = np.concatenate((reward_traj, reward))
-        
-        start_idx = last_idx - 20
-        prev_last_idx = last_idx
-        last_idx = start_idx + 100
-    return reward_traj
-
-total_reward = np.zeros(0)
-subfolders = [f for f in sorted(os.listdir(train_set_path)) if f.isdigit()]
-total_reward = np.zeros(0)
-for folder in subfolders:
-    print("processing:", folder)
-    folder_path = os.path.join(train_set_path, folder)
-    file_list = sorted([f for f in os.listdir(folder_path) if f.endswith('.png')])
-    
-    images = []
-    for file_name in file_list:
-        img_path = os.path.join(folder_path, file_name)
-        with Image.open(img_path) as img:
-            images.append(np.array(img))
-        
-    combined_array = np.stack(images)
-    demo_len = combined_array.shape[0]
-    reward_traj = np.zeros(0)
-    start_idx = 0
-    prev_last_idx = 0
-    last_idx = 100
+    last_idx = 150
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
         if last_frame-start_idx < 100:
@@ -230,7 +214,46 @@ for folder in subfolders:
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 100
+        last_idx = start_idx + 150
+    return reward_traj
+
+total_reward = np.zeros(0)
+subfolders = [f for f in sorted(os.listdir(train_set_path)) if f.isdigit()]
+total_reward = np.zeros(0)
+for folder in subfolders:
+    folder_path = os.path.join(train_set_path, folder)
+    print("processing:", folder_path)
+    file_list = sorted([f for f in os.listdir(folder_path) if f.endswith('.png')])
+    
+    images = []
+    for file_name in file_list:
+        img_path = os.path.join(folder_path, file_name)
+        with Image.open(img_path) as img:
+            images.append(np.array(img))
+        
+    combined_array = np.stack(images)
+    demo_len = combined_array.shape[0]
+    
+    # reward_traj = np.zeros(0)
+    # start_idx = 0
+    # prev_last_idx = 0
+    # last_idx = 100
+    # while start_idx <= combined_array.shape[0]:
+    #     last_frame = min(last_idx, combined_array.shape[0])
+    #     if last_frame-start_idx < 100:
+    #         start_idx -= 100
+    #     selected_frames = combined_array[start_idx:last_frame]
+    #     frames = process_frames(selected_frames)
+    #     reward = reward_model.calc_reward(frames)
+    #     reward = reward.cpu().numpy().squeeze()
+        
+    #     reward = reward[prev_last_idx-start_idx:]
+    #     reward_traj = np.concatenate((reward_traj, reward))
+        
+    #     start_idx = last_idx - 20
+    #     prev_last_idx = last_idx
+    #     last_idx = start_idx + 100
+    reward_traj = extract_reward_100(combined_array, reward_model)
     print("demolen:", combined_array.shape[0])
     print("reward:", len(reward_traj))
     # frames = process_frames(combined_array)
@@ -258,6 +281,7 @@ for i, filename in enumerate(os.listdir(pkl_dir)):
             
         frames = pkl2frames(pkl_file_path)
         rewards = extract_reward_100(frames, reward_model)
+        #rewards = reward_model.calc_reward(process_frames(frames))
         len_frames = frames.shape[0]
         
         reward_std = (rewards - mean) / std
@@ -265,7 +289,7 @@ for i, filename in enumerate(os.listdir(pkl_dir)):
         
         viper_stacked_timesteps = []
         for i in range(len_frames):
-            timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
+            timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), max(0, i)])
             viper_stacked_timesteps.append(timesteps)
         viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
         
