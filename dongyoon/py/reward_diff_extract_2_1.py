@@ -20,21 +20,12 @@ import pickle
 from PIL import Image
 import matplotlib.pyplot as plt
 import scipy
-from absl import app, flags
 
-"""
-extract rewards from pkl files and relabel
-
-<to change>
-- train_set_path
-- config_path
-- mean & std
-"""
-
+# diffusion_2_1
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_lamp_2_1.yaml'
 pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_lamp.yaml'
-mean = -703.9833
-std = 99.1379
+mean = -703.98338
+std = 99.13794
 
 class Custom_DiffusionReward(nn.Module):
     def __init__(self, cfg):
@@ -94,37 +85,36 @@ class Custom_DiffusionReward(nn.Module):
         assert x.max() <= 1
         # preprocessing
         seq_len = x.shape[1]
-        num_frames = self.model.cfg.params['condition_emb_config']['params']['num_cond_frames']
+        num_frames = self.model.cfg.params['condition_emb_config']['params']['num_cond_frames'] + 1
         n_skip = self.model.frame_skip
-        subseq_len = (num_frames + 1) * n_skip
+        subseq_len = (num_frames - 1) * n_skip # 4 * 16 = 64
 
         x = x.permute(0, 1, 4, 2 ,3) # B * T * H * W * C -> B * T * C * H * W
         _, indices = self.model.content_codec.encode_to_z(x)
-        indices = indices.to(self.model.device)
         assert indices.shape[0] == 1
         indices = indices.reshape(indices.shape[0], seq_len, -1)
 
         if reward_type == 'entropy':
             # only return conditional frames
-            post_idxes = list(range(seq_len - subseq_len + 2))
-            batch_indices = [indices[:, idx:idx+subseq_len-n_skip:n_skip] for idx in post_idxes]
+            post_idxes = list(range(seq_len - subseq_len + n_skip))
+            batch_indices = [indices[:, idx:idx+subseq_len:n_skip] for idx in post_idxes]
             batch_indices = torch.stack(batch_indices, dim=0)
             batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1)    
             
-            if subseq_len - 2 > 0:
-                pre_batch_indices = [indices[:, idx].tile((1, num_frames)) for idx in range(subseq_len-2)]
+            if subseq_len - n_skip > 0:
+                pre_batch_indices = [indices[:, idx].tile((1, num_frames - 1)) for idx in range(subseq_len-n_skip)]
                 pre_batch_indices = torch.concat(pre_batch_indices, dim=0)
                 batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0)
             cond = {'condition_token': batch_indices}
         elif reward_type == 'likelihood':
             # return conditional frames + current frame
-            post_idxes = list(range(seq_len - subseq_len + 1))
-            batch_indices = [indices[:, idx:idx+subseq_len-n_skip:n_skip] for idx in post_idxes]
+            post_idxes = list(range(seq_len - subseq_len))
+            batch_indices = [indices[:, idx:idx+subseq_len+n_skip:n_skip] for idx in post_idxes]
             batch_indices = torch.stack(batch_indices, dim=0)
             batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1)    
             
-            if subseq_len - 2 > 0:
-                pre_batch_indices = [indices[:, idx].tile((1, num_frames)) for idx in range(subseq_len-1)]
+            if subseq_len - n_skip > 0:
+                pre_batch_indices = [indices[:, idx].tile((1, num_frames)) for idx in range(subseq_len)]
                 pre_batch_indices = torch.concat(pre_batch_indices, dim=0)
                 batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0)
             cond = {'condition_token': batch_indices}
@@ -143,13 +133,8 @@ class Custom_DiffusionReward(nn.Module):
         condition_token = condition['condition_token']
 
         rewards = self.calc_vlb(content_token, condition_token)
-        if self.use_std:
-            rewards_std = (rewards - self.stat[0]) / self.stat[1]
-            scaled_rewards = (1 - self.expl_scale) * rewards_std
-            return scaled_rewards  
-        else:
-            return rewards
-    
+        return rewards
+     
     @torch.no_grad()
     def calc_vlb(self, cont_emb, cond_emb):
         x = cont_emb
@@ -250,14 +235,20 @@ class Custom_DiffusionReward(nn.Module):
         rewards = torch.stack(vlbs, dim=1).mean(1)
         return rewards
     
+    def update(self, batch):
+        metrics = dict()
+
+        if self.use_expl_reward:
+            metrics.update(self.expl_reward.update(batch))
+        return metrics
+    
 with open(config_path, 'r') as file:
     config = yaml.safe_load(file)
     config = SimpleNamespace(**config)
 reward_model = Custom_DiffusionReward(config)
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:6')
-    reward_model.model.content_codec.to('cuda:7')
-
+    reward_model = reward_model.to('cuda:7')
+    
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
         data = pickle.load(file)
@@ -265,7 +256,7 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     for i in range(len(data['observations'])):
         frames.append(data['observations'][i]['color_image2'])
     frames = np.array(frames)
-    frames = frames.transpose(0, 2, 3, 1)
+    frames = frames.transpose(0, 2, 3, 1) # T * C * H * W -> T * H * W * C
     frames_resized = []
     for j, frame in enumerate(frames):
         frame = Image.fromarray(frame)
@@ -274,7 +265,7 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     frames = np.array(frames_resized)    
     return frames
 
-def process_frames(frames):
+def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W, tensor
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
@@ -288,11 +279,11 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 100
+    last_idx = 200
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 20:
-            start_idx -= 20
+        if last_frame-start_idx < 100:
+            start_idx -= 100
         selected_frames = combined_array[start_idx:last_frame]
         frames = process_frames(selected_frames)
         reward = reward_model.calc_reward(frames)
@@ -303,38 +294,48 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 100
+        last_idx = start_idx + 200
     return reward_traj
 
-for i, filename in enumerate(os.listdir(pkl_dir)):
-    if filename.startswith('2023'):
-        print("processing pkl:", i, filename)
-        pkl_file_path = os.path.join(pkl_dir, filename)
-        with open(pkl_file_path, 'rb') as file:
-            data = pickle.load(file)
-            
-        frames = pkl2frames(pkl_file_path)
-        rewards = extract_reward_100(frames, reward_model)
-        len_frames = frames.shape[0]
+pkl_dir_path = Path(pkl_dir)
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+len_files = len(pkl_files)
 
-        reward_std = (rewards - mean) / std
-        reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
-        
-        diff_stacked_timesteps = []
-        for i in range(len_frames):
-            timesteps = np.array([max(0, i-1), max(0, i)])
-            diff_stacked_timesteps.append(timesteps)
-        diff_stacked_timesteps = np.vstack(diff_stacked_timesteps)
-        
-        print('frame shape:', frames.shape)
-        print('reward shape:', rewards.shape)
-        print('diff_stacked_timesteps shape:', diff_stacked_timesteps.shape)
-        
-        assert len_frames == rewards.shape[0]
-        assert len_frames == diff_stacked_timesteps.shape[0]
-        
-        data['diff_reward'] = reward_std
-        data['diff_stacked_timesteps'] = diff_stacked_timesteps
-        
-        with open(pkl_file_path, 'wb') as file:
-            pickle.dump(data, file)
+for i, pkl_file_path in enumerate(pkl_files):
+    print("processing pkl:", i,"/", len_files, pkl_file_path)
+    pkl_file_path = os.path.join(pkl_dir, pkl_file_path)
+    with open(pkl_file_path, 'rb') as file:
+        data = pickle.load(file) # need for modify in after code
+    frames = pkl2frames(pkl_file_path)
+    
+    # if using extraction methods to prevent OOM
+    rewards = extract_reward_100(frames, reward_model)
+    
+    # if trajs is short enough
+    # rewards = reward_model.calc_reward(process_frames(frames))
+    # rewards = rewards.cpu().numpy().squeeze()
+    
+    len_frames = frames.shape[0]
+    
+    reward_std = (rewards - mean) / std
+    reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
+    
+    diff_stacked_timesteps = []
+    for i in range(len_frames):
+        timesteps = np.array([max(0, i-1), i])
+        # timesteps = np.array([max(0, i-48), max(0, 32), max(0, 16), i])
+        diff_stacked_timesteps.append(timesteps)
+    diff_stacked_timesteps = np.vstack(diff_stacked_timesteps)
+    
+    print('frame shape:', frames.shape)
+    print('reward shape:', rewards.shape)
+    print('diff_stacked_timesteps shape:', diff_stacked_timesteps.shape)
+    
+    assert len_frames == rewards.shape[0]
+    assert len_frames == diff_stacked_timesteps.shape[0]
+    
+    data['diffusion_reward'] = reward_std
+    data['diffusion_stacked_timesteps'] = diff_stacked_timesteps
+    
+    with open(pkl_file_path, 'wb') as file:
+        pickle.dump(data, file)

@@ -365,37 +365,39 @@ print("std reward:", std_reward)
 mean = mean_reward
 std = std_reward
 
-for i, filename in enumerate(os.listdir(pkl_dir)):
-    if filename.startswith('2023'):
-        print("processing pkl:", i, filename)
-        print(mean, std)
-        pkl_file_path = os.path.join(pkl_dir, filename)
-        with open(pkl_file_path, 'rb') as file:
-            data = pickle.load(file)
-            
-        frames = pkl2frames(pkl_file_path)
-        rewards = extract_reward_100(frames, reward_model)
-        #rewards = reward_model.calc_reward(process_frames(frames))
-        len_frames = frames.shape[0]
+pkl_dir_path = Path(pkl_dir)
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
+
+for i, pkl_file_path in enumerate(pkl_files):
+    print("processing pkl:", i, pkl_file_path)
+    print(mean, std)
+    pkl_file_path = os.path.join(pkl_dir, pkl_file_path)
+    with open(pkl_file_path, 'rb') as file:
+        data = pickle.load(file)
         
-        reward_std = (rewards - mean) / std
-        reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
-        
-        diff_stacked_timesteps = []
-        for i in range(len_frames):
-            timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), max(0, i)])
-            diff_stacked_timesteps.append(timesteps)
-        diff_stacked_timesteps = np.vstack(diff_stacked_timesteps)
-        
-        print('frame shape:', frames.shape)
-        print('reward shape:', rewards.shape)
-        print('diff_stacked_timesteps shape:', diff_stacked_timesteps.shape)
-        
-        assert len_frames == rewards.shape[0]
-        assert len_frames == diff_stacked_timesteps.shape[0]
-        
-        data['diffusion_reward_16'] = reward_std
-        data['diffusion_stacked_timesteps_16'] = diff_stacked_timesteps
-        
-        with open(pkl_file_path, 'wb') as file:
-            pickle.dump(data, file)
+    frames = pkl2frames(pkl_file_path)
+    rewards = extract_reward_100(frames, reward_model)
+    #rewards = reward_model.calc_reward(process_frames(frames))
+    len_frames = frames.shape[0]
+    
+    reward_std = (rewards - mean) / std
+    reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
+    
+    diff_stacked_timesteps = []
+    for i in range(len_frames):
+        timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), max(0, i)])
+        diff_stacked_timesteps.append(timesteps)
+    diff_stacked_timesteps = np.vstack(diff_stacked_timesteps)
+    
+    print('frame shape:', frames.shape)
+    print('reward shape:', rewards.shape)
+    print('diff_stacked_timesteps shape:', diff_stacked_timesteps.shape)
+    
+    assert len_frames == rewards.shape[0]
+    assert len_frames == diff_stacked_timesteps.shape[0]
+    
+    data['diffusion_reward_16'] = reward_std
+    data['diffusion_stacked_timesteps_16'] = diff_stacked_timesteps
+    
+    with open(pkl_file_path, 'wb') as file:
+        pickle.dump(data, file)

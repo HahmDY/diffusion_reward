@@ -16,9 +16,20 @@ import matplotlib.pyplot as plt
 import os
 import scipy
 
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp.yaml'
-train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_lamp/low/train'
+"""
+extract rewards from pkl files and relabel
+
+<to change>
+- train_set_path
+- config_path
+- mean & std
+"""
+
 pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_16.yaml'
+mean = -494.83095
+std = 116.409757
+
 
 class CustomVIPER(nn.Module):
     def __init__(self, cfg):
@@ -43,14 +54,14 @@ class CustomVIPER(nn.Module):
             (mostly): 1 * T * ...
         '''
         seq_len = x.shape[1] # T
-        num_frames = self.model_cfg.num_frames + 1
+        num_frames = self.model_cfg.num_frames + 1 # num_frame+1 = 4
         n_skip = self.model_cfg.frame_skip
-        subseq_len = self.model_cfg.num_frames * n_skip # 4 * 16 = 64
+        subseq_len = num_frames * n_skip # (num_frame+1) * skip = 80
 
         x = x.permute(0, 1, 4, 2 ,3) # B * T * C * H * W
         embs, indices = self.model.encode_to_z(x) 
-        indices = indices.reshape(indices.shape[0], seq_len, -1) # [1, T, 256]
-        embs = embs.reshape(embs.shape[0], seq_len, indices.shape[-1], -1) # [1, T, 256, 64]
+        indices = indices.reshape(indices.shape[0], seq_len, -1)
+        embs = embs.reshape(embs.shape[0], seq_len, indices.shape[-1], -1)
         
         if reward_type == 'likelihood':
             post_idxes = list(range(seq_len - subseq_len)) # T - 64
@@ -114,17 +125,18 @@ class CustomVIPER(nn.Module):
     @torch.no_grad()
     def calc_reward(self, imgs):
         batch_embs, batch_indices = self.imgs_to_batch(imgs, self.reward_type)
-        batch_embs = batch_embs.to('cuda:5')
-        batch_indices = batch_indices.to('cuda:5')
+        batch_embs = batch_embs.to('cuda:7')
+        batch_indices = batch_indices.to('cuda:7')
         sos_tokens = self.model.calc_sos_tokens(imgs, batch_embs).tile((batch_embs.shape[0], 1, 1))
-        sos_tokens = sos_tokens.to('cuda:5')
-
+        sos_tokens = sos_tokens.to('cuda:7')
         rewards = self.cal_log_prob(batch_embs, batch_indices, sos_tokens, target_indices=batch_indices, reward_type=self.reward_type)
         return rewards  
     
     @torch.no_grad()
     def cal_log_prob(self, embs, x, c, target_indices=None, reward_type='likelihood'):
         self.model.eval()
+        # x: batch_indices
+        # c: sos_tokens
         if not self.model.use_vqemb:
             x = torch.cat((c, x), dim=1) if x is not None else c   
         else:
@@ -164,10 +176,10 @@ with open(config_path, 'r') as file:
     config = SimpleNamespace(**config)
 reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:5')
-    reward_model.model = reward_model.model.to('cuda:5')
-    reward_model.model.transformer = reward_model.model.transformer.to('cuda:5')
-    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:5')
+    reward_model = reward_model.to('cuda:7')
+    reward_model.model = reward_model.model.to('cuda:7')
+    reward_model.model.transformer = reward_model.model.transformer.to('cuda:7')
+    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:7')
 
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
@@ -176,7 +188,7 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     for i in range(len(data['observations'])):
         frames.append(data['observations'][i]['color_image2'])
     frames = np.array(frames)
-    frames = frames.transpose(0, 2, 3, 1) # T * C * H * W -> T * H * W * C
+    frames = frames.transpose(0, 2, 3, 1)
     frames_resized = []
     for j, frame in enumerate(frames):
         frame = Image.fromarray(frame)
@@ -185,11 +197,11 @@ def pkl2frames(pkl_path): # pkl -> T * H * W * C
     frames = np.array(frames_resized)    
     return frames
 
-def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W, tensor
+def process_frames(frames):
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:5')
+    frames = torch.from_numpy(frames).float().to('cuda:7')
     return frames
 
 def extract_reward_100(combined_array, reward_model):
@@ -199,7 +211,7 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 150
+    last_idx = 200
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
         if last_frame-start_idx < 100:
@@ -214,94 +226,50 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 150
+        last_idx = start_idx + 200
     return reward_traj
 
-total_reward = np.zeros(0)
-subfolders = [f for f in sorted(os.listdir(train_set_path)) if f.isdigit()]
-total_reward = np.zeros(0)
-for folder in subfolders:
-    folder_path = os.path.join(train_set_path, folder)
-    print("processing:", folder_path)
-    file_list = sorted([f for f in os.listdir(folder_path) if f.endswith('.png')])
-    
-    images = []
-    for file_name in file_list:
-        img_path = os.path.join(folder_path, file_name)
-        with Image.open(img_path) as img:
-            images.append(np.array(img))
-        
-    combined_array = np.stack(images)
-    demo_len = combined_array.shape[0]
-    
-    # reward_traj = np.zeros(0)
-    # start_idx = 0
-    # prev_last_idx = 0
-    # last_idx = 100
-    # while start_idx <= combined_array.shape[0]:
-    #     last_frame = min(last_idx, combined_array.shape[0])
-    #     if last_frame-start_idx < 100:
-    #         start_idx -= 100
-    #     selected_frames = combined_array[start_idx:last_frame]
-    #     frames = process_frames(selected_frames)
-    #     reward = reward_model.calc_reward(frames)
-    #     reward = reward.cpu().numpy().squeeze()
-        
-    #     reward = reward[prev_last_idx-start_idx:]
-    #     reward_traj = np.concatenate((reward_traj, reward))
-        
-    #     start_idx = last_idx - 20
-    #     prev_last_idx = last_idx
-    #     last_idx = start_idx + 100
-    reward_traj = extract_reward_100(combined_array, reward_model)
-    print("demolen:", combined_array.shape[0])
-    print("reward:", len(reward_traj))
-    # frames = process_frames(combined_array)
-    # reward_traj = reward_model.calc_reward(frames)
-    # reward_traj = reward_traj.cpu().numpy().squeeze()
-    
-    assert len(reward_traj) == demo_len
-    
-    total_reward = np.concatenate((total_reward, reward_traj))
-mean_reward = np.mean(total_reward)
-std_reward = np.std(total_reward)
-print("mean reward:", mean_reward)
-print("std reward:", std_reward)
 
-mean = mean_reward
-std = std_reward
 
-for i, filename in enumerate(os.listdir(pkl_dir)):
-    if filename.startswith('2023'):
-        print("processing pkl:", i, filename)
-        print(mean, std)
-        pkl_file_path = os.path.join(pkl_dir, filename)
-        with open(pkl_file_path, 'rb') as file:
-            data = pickle.load(file)
-            
-        frames = pkl2frames(pkl_file_path)
-        rewards = extract_reward_100(frames, reward_model)
-        #rewards = reward_model.calc_reward(process_frames(frames))
-        len_frames = frames.shape[0]
+pkl_dir_path = Path(pkl_dir)
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+len_files = len(pkl_files)
+
+for i, pkl_file_path in enumerate(pkl_files):
+    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
+    with open(pkl_file_path, 'rb') as file:
+        data = pickle.load(file)
         
-        reward_std = (rewards - mean) / std
-        reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
-        
-        viper_stacked_timesteps = []
-        for i in range(len_frames):
-            timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), max(0, i)])
-            viper_stacked_timesteps.append(timesteps)
-        viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
-        
-        print('frame shape:', frames.shape)
-        print('reward shape:', rewards.shape)
-        print('viper_stacked_timesteps shape:', viper_stacked_timesteps.shape)
-        
-        assert len_frames == rewards.shape[0]
-        assert len_frames == viper_stacked_timesteps.shape[0]
-        
-        data['viper_reward_16'] = reward_std
-        data['viper_stacked_timesteps_16'] = viper_stacked_timesteps
-        
-        with open(pkl_file_path, 'wb') as file:
-            pickle.dump(data, file)
+    frames = pkl2frames(pkl_file_path)
+    
+    # if using extraction methods to prevent OOM
+    rewards = extract_reward_100(frames, reward_model)
+    
+    # if trajs is short enough
+    # rewards = reward_model.calc_reward(process_frames(frames))
+    # rewards = rewards.cpu().numpy().squeeze()
+    
+    len_frames = frames.shape[0]
+    
+    reward_std = (rewards - mean) / std
+    reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
+    
+    viper_stacked_timesteps = []
+    for i in range(len_frames):
+        # timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
+        timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), i])
+        viper_stacked_timesteps.append(timesteps)
+    viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
+    
+    print('frame shape:', frames.shape)
+    print('reward shape:', rewards.shape)
+    print('viper_stacked_timesteps shape:', viper_stacked_timesteps.shape)
+    
+    assert len_frames == rewards.shape[0]
+    assert len_frames == viper_stacked_timesteps.shape[0]
+    
+    data['viper_reward_16'] = reward_std
+    data['viper_stacked_timesteps_16'] = viper_stacked_timesteps
+    
+    with open(pkl_file_path, 'wb') as file:
+        pickle.dump(data, file)

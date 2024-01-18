@@ -26,9 +26,9 @@ extract rewards from pkl files and relabel
 """
 
 pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp.yaml'
-mean = -479.2098
-std = 93.8880
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_4.yaml'
+mean = -495.09049
+std = 125.5547928
 
 
 class CustomVIPER(nn.Module):
@@ -64,19 +64,41 @@ class CustomVIPER(nn.Module):
         embs = embs.reshape(embs.shape[0], seq_len, indices.shape[-1], -1)
         
         if reward_type == 'likelihood':
-            post_idxes = list(range(seq_len - subseq_len + 1)) # 0 ~ T-80
-            batch_indices = [indices[:, idx:idx+subseq_len:n_skip] for idx in post_idxes] # idx, idx+16, ... , idx+64. idx=0~T-80 =>최소0, 최대 T-64
+            post_idxes = list(range(seq_len - subseq_len)) # T - 64
+            
+            #batch_indices = [indices[:, idx:idx+subseq_len+n_skip:n_skip] for idx in post_idxes] # T, T+16, T+32, T+48, T+64, post_idxes:0~T-64
+            batch_indices = []
+            for idx in post_idxes:
+                idx_idx = [idx+n_skip, idx+2*n_skip, idx+3*n_skip, idx+4*n_skip, min(idx+5*n_skip, seq_len-1)]
+                batch_indices.append(indices[:, idx_idx])
+            # [1, 5, 256]
             batch_indices = torch.stack(batch_indices, dim=0)
-            batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1)
-            batch_embs = [embs[:, idx:idx+subseq_len:n_skip] for idx in post_idxes]
-            batch_embs = torch.stack(batch_embs, dim=0)
-            batch_embs = batch_embs.squeeze(1).reshape(batch_embs.shape[0], -1, batch_embs.shape[-1])
+            batch_indices = batch_indices.squeeze(1).reshape(batch_indices.shape[0], -1) # [1280]
+            
+            #batch_embs = [embs[:, idx:idx+subseq_len+n_skip:n_skip] for idx in post_idxes]
+            batch_embs = []
+            for idx in post_idxes:
+                idx_idx = [idx+n_skip, idx+2*n_skip, idx+3*n_skip, idx+4*n_skip, min(idx+5*n_skip, seq_len-1)]
+                batch_embs.append(embs[:, idx_idx])
+            # [64, 1280]
+            batch_embs = torch.stack(batch_embs, dim=0) # [36, 1, 5, 256, 64]
+            batch_embs = batch_embs.squeeze(1).reshape(batch_embs.shape[0], -1, batch_embs.shape[-1]) # [36, 1280, 64]
+            
+            pre_batch_indices = []
+            for idx in range(subseq_len):
+                idx_idx = [max(idx-3*n_skip, 0),max(idx-2*n_skip, 0),max(idx-1*n_skip, 0),idx,min(idx+n_skip, seq_len-1)]
+                pre_batch_indice = torch.cat([indices[:, idx_idx[0]], indices[:, idx_idx[1]], indices[:, idx_idx[2]], indices[:, idx_idx[3]], indices[:, idx_idx[4]]], dim=1)
+                pre_batch_indices.append(pre_batch_indice)
+            #pre_batch_indices = [indices[:, min(idx+n_skip, seq_len-1)].tile((1, num_frames)) for idx in range(subseq_len)] # 64 * [1280]
+            pre_batch_indices = torch.concat(pre_batch_indices, dim=0) # [64, 1280]
+            batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0) # [128, 1280]
 
-            pre_batch_indices = [indices[:, idx].tile((1, num_frames)) for idx in range(subseq_len-1)]
-            pre_batch_indices = torch.concat(pre_batch_indices, dim=0)
-            batch_indices = torch.concat([pre_batch_indices, batch_indices], dim=0)
-
-            pre_batch_embs = [embs[:, idx].tile((1, num_frames, 1)) for idx in range(subseq_len-1)]
+            pre_batch_embs = []
+            for idx in range(subseq_len):
+                idx_idx = [max(idx-3*n_skip, 0),max(idx-2*n_skip, 0),max(idx-1*n_skip, 0),idx,min(idx+n_skip, seq_len-1)]
+                pre_batch_emb = torch.cat([embs[:, idx_idx[0]], embs[:, idx_idx[1]], embs[:, idx_idx[2]], embs[:, idx_idx[3]], embs[:, idx_idx[4]]], dim=1)
+                pre_batch_embs.append(pre_batch_emb)
+            #pre_batch_embs = [embs[:, min(idx+n_skip, seq_len-1)].tile((1, num_frames, 1)) for idx in range(subseq_len)]
             pre_batch_embs = torch.concat(pre_batch_embs, dim=0)
             batch_embs = torch.concat([pre_batch_embs, batch_embs], dim=0)
         elif reward_type == 'entropy':
@@ -106,7 +128,7 @@ class CustomVIPER(nn.Module):
         batch_embs = batch_embs.to('cuda:7')
         batch_indices = batch_indices.to('cuda:7')
         sos_tokens = self.model.calc_sos_tokens(imgs, batch_embs).tile((batch_embs.shape[0], 1, 1))
-
+        sos_tokens = sos_tokens.to('cuda:7')
         rewards = self.cal_log_prob(batch_embs, batch_indices, sos_tokens, target_indices=batch_indices, reward_type=self.reward_type)
         return rewards  
     
@@ -155,7 +177,10 @@ with open(config_path, 'r') as file:
 reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
     reward_model = reward_model.to('cuda:7')
-    reward_model.model.vqgan.to('cuda:7')
+    reward_model.model = reward_model.model.to('cuda:7')
+    reward_model.model.transformer = reward_model.model.transformer.to('cuda:7')
+    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:7')
+
 
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
@@ -187,7 +212,7 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 100
+    last_idx = 200
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
         if last_frame-start_idx < 100:
@@ -202,38 +227,47 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 100
+        last_idx = start_idx + 200
     return reward_traj
 
-for i, filename in enumerate(os.listdir(pkl_dir)):
-    if filename.startswith('2023'):
-        print("processing pkl:", i, filename)
-        pkl_file_path = os.path.join(pkl_dir, filename)
-        with open(pkl_file_path, 'rb') as file:
-            data = pickle.load(file)
-            
-        frames = pkl2frames(pkl_file_path)
-        rewards = extract_reward_100(frames, reward_model)
-        len_frames = frames.shape[0]
+pkl_dir_path = Path(pkl_dir)
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+len_files = len(pkl_files)
+
+for i, pkl_file_path in enumerate(pkl_files):
+    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
+    with open(pkl_file_path, 'rb') as file:
+        data = pickle.load(file)
         
-        reward_std = (rewards - mean) / std
-        reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
-        
-        viper_stacked_timesteps = []
-        for i in range(len_frames):
-            timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
-            viper_stacked_timesteps.append(timesteps)
-        viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
-        
-        print('frame shape:', frames.shape)
-        print('reward shape:', rewards.shape)
-        print('viper_stacked_timesteps shape:', viper_stacked_timesteps.shape)
-        
-        assert len_frames == rewards.shape[0]
-        assert len_frames == viper_stacked_timesteps.shape[0]
-        
-        data['viper_reward_16'] = reward_std
-        data['viper_stacked_timesteps_16'] = viper_stacked_timesteps
-        
-        with open(pkl_file_path, 'wb') as file:
-            pickle.dump(data, file)
+    frames = pkl2frames(pkl_file_path)
+    
+    # if using extraction methods to prevent OOM
+    rewards = extract_reward_100(frames, reward_model)
+    
+    # if trajs is short enough
+    # rewards = reward_model.calc_reward(process_frames(frames))
+    # rewards = rewards.cpu().numpy().squeeze()
+    
+    len_frames = frames.shape[0]
+    
+    reward_std = (rewards - mean) / std
+    reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
+    
+    viper_stacked_timesteps = []
+    for i in range(len_frames):
+        timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
+        viper_stacked_timesteps.append(timesteps)
+    viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
+    
+    print('frame shape:', frames.shape)
+    print('reward shape:', rewards.shape)
+    print('viper_stacked_timesteps shape:', viper_stacked_timesteps.shape)
+    
+    assert len_frames == rewards.shape[0]
+    assert len_frames == viper_stacked_timesteps.shape[0]
+    
+    data['viper_reward'] = reward_std
+    data['viper_stacked_timesteps'] = viper_stacked_timesteps
+    
+    with open(pkl_file_path, 'wb') as file:
+        pickle.dump(data, file)
