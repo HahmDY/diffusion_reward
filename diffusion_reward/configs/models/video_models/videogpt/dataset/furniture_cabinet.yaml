@@ -1,0 +1,14 @@
+# env
+domain: furniture_cabinet
+
+#model
+codec:
+  channels: [128, 256, 256]
+  latent_size: 16
+  device: cuda:6
+
+num_frames: 4
+frame_skip: 16
+device: cuda:6
+latent_size: 16
+epochs: 1000
