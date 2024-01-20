@@ -5,10 +5,10 @@ domain: furniture_roundtable
 codec:
   channels: [128, 256, 256]
   latent_size: 16
-  device: cuda:6
+  device: cuda:7
 
 num_frames: 4
 frame_skip: 16
-device: cuda:6
+device: cuda:7
 latent_size: 16
 epochs: 1000
