@@ -273,9 +273,10 @@ std = std_reward
 
 pkl_dir_path = Path(pkl_dir)
 pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
+len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):
-    print("processing pkl:", i, pkl_file_path)
+    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
     print(mean, std)
     with open(pkl_file_path, 'rb') as file:
         data = pickle.load(file)

@@ -22,10 +22,10 @@ import matplotlib.pyplot as plt
 import scipy
 
 # diffusion_4_16
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_lamp_4_16.yaml'
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
-mean = -590.04105
-std = 74.650951
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_oneleg_4_16.yaml'
+pkl_dir = '/home/dongyoon/FB_dataset/raw/low/one_leg/val'
+mean = -723.68119
+std = 95.78332
 
 class Custom_DiffusionReward(nn.Module):
     def __init__(self, cfg):
@@ -314,7 +314,7 @@ def extract_reward_100(combined_array, reward_model):
     return reward_traj
 
 pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
 len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):

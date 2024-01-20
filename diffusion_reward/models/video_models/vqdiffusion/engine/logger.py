@@ -28,7 +28,7 @@ class Logger(object):
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir, exist_ok=True)
             self.text_writer = open(os.path.join(log_dir, 'log.txt'), 'a') # 'w')
-            args.tensorboard = False
+            #args.tensorboard = False
             if args.tensorboard:
                 self.log_info('using tensorboard')
                 self.tb_writer = torch.utils.tensorboard.SummaryWriter(log_dir=log_dir) # tensorboard.SummaryWriter(log_dir=log_dir)

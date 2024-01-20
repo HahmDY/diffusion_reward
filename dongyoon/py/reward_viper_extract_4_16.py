@@ -25,10 +25,10 @@ extract rewards from pkl files and relabel
 - mean & std
 """
 
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
+pkl_dir = '/home/dongyoon/FB_dataset/raw/low/one_leg/val'
 config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_16.yaml'
-mean = -494.83095
-std = 116.409757
+mean = -614.40232
+std = 128.7201
 
 
 class CustomVIPER(nn.Module):
@@ -232,7 +232,7 @@ def extract_reward_100(combined_array, reward_model):
 
 
 pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
 len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):
@@ -256,7 +256,6 @@ for i, pkl_file_path in enumerate(pkl_files):
     
     viper_stacked_timesteps = []
     for i in range(len_frames):
-        # timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
         timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), i])
         viper_stacked_timesteps.append(timesteps)
     viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
