@@ -15,21 +15,32 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import os
 import scipy
+import argparse
 
-"""
-extract rewards from pkl files and relabel
+parser = argparse.ArgumentParser()
 
-<to change>
-- train_set_path
-- config_path
-- mean & std
-- cuda device
-"""
+parser.add_argument('--furniture', type=str, help='name of furniture')
+parser.add_argument('--pkl_dir', type=str, help='path of pkl directory')
+parser.add_argument('--mean', type=float, help='mean of reward')
+parser.add_argument('--std', type=float, help='std of reward')
+parser.add_argument('--device', type=str, help='cuda device to use')
+parser.add_argument('--frames', type=int, help='processing unit')
+args = parser.parse_args()
 
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/val'
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_4.yaml'
-mean = -495.09049
-std = 125.5547928
+if args.furniture == 'one_leg':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_oneleg_4_4.yaml'
+elif args.furniture == 'lamp':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_4.yaml'
+elif args.furniture == 'cabinet':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_cabinet_4_4.yaml'
+elif args.furniture == 'round_table':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_roundtable_4_4.yaml'
+
+pkl_dir = args.pkl_dir
+mean = args.mean
+std = args.std
+cuda_device = args.device
+frames_to_process = args.frames
 
 
 class CustomVIPER(nn.Module):
@@ -39,7 +50,7 @@ class CustomVIPER(nn.Module):
         # load video models
         self.model_cfg = OmegaConf.load(cfg.cfg_path)
         self.model = VideoGPTTransformer(self.model_cfg)
-        self.model.load_state_dict(torch.load(cfg.ckpt_path, map_location='cuda:7'))
+        self.model.load_state_dict(torch.load(cfg.ckpt_path, map_location=cuda_device))
         self.model.eval()
         for param in self.model.parameters(): 
             param.requires_grad = False
@@ -126,10 +137,10 @@ class CustomVIPER(nn.Module):
     @torch.no_grad()
     def calc_reward(self, imgs):
         batch_embs, batch_indices = self.imgs_to_batch(imgs, self.reward_type)
-        batch_embs = batch_embs.to('cuda:7')
-        batch_indices = batch_indices.to('cuda:7')
+        batch_embs = batch_embs.to(cuda_device)
+        batch_indices = batch_indices.to(cuda_device)
         sos_tokens = self.model.calc_sos_tokens(imgs, batch_embs).tile((batch_embs.shape[0], 1, 1))
-        sos_tokens = sos_tokens.to('cuda:7')
+        sos_tokens = sos_tokens.to(cuda_device)
         rewards = self.cal_log_prob(batch_embs, batch_indices, sos_tokens, target_indices=batch_indices, reward_type=self.reward_type)
         return rewards  
     
@@ -177,10 +188,10 @@ with open(config_path, 'r') as file:
     config = SimpleNamespace(**config)
 reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:7')
-    reward_model.model = reward_model.model.to('cuda:7')
-    reward_model.model.transformer = reward_model.model.transformer.to('cuda:7')
-    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:7')
+    reward_model = reward_model.to(cuda_device)
+    reward_model.model = reward_model.model.to(cuda_device)
+    reward_model.model.transformer = reward_model.model.transformer.to(cuda_device)
+    reward_model.model.vqgan = reward_model.model.vqgan.to(cuda_device)
 
 
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
@@ -203,7 +214,7 @@ def process_frames(frames):
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:7')
+    frames = torch.from_numpy(frames).float().to(cuda_device)
     return frames
 
 def extract_reward_100(combined_array, reward_model):
@@ -213,7 +224,7 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 150
+    last_idx = frames_to_process
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
         if last_frame-start_idx < 25:
@@ -228,17 +239,19 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 150
+        last_idx = start_idx + frames_to_process
     return reward_traj
 
 pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"2023-12-30-04:08:31_success.pkl"))
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
 len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):
-    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
     with open(pkl_file_path, 'rb') as file:
         data = pickle.load(file)
+    if 'viper_reward' in data:
+        continue
+    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
         
     frames = pkl2frames(pkl_file_path)
     
@@ -256,7 +269,7 @@ for i, pkl_file_path in enumerate(pkl_files):
     
     viper_stacked_timesteps = []
     for i in range(len_frames):
-        timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
+        timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), i])
         viper_stacked_timesteps.append(timesteps)
     viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
     

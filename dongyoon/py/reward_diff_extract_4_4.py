@@ -20,12 +20,38 @@ import pickle
 from PIL import Image
 import matplotlib.pyplot as plt
 import scipy
+import argparse
 
+parser = argparse.ArgumentParser()
+
+parser.add_argument('--furniture', type=str, help='name of furniture')
+parser.add_argument('--pkl_dir', type=str, help='path of pkl directory')
+parser.add_argument('--mean', type=float, help='mean of reward')
+parser.add_argument('--std', type=float, help='std of reward')
+parser.add_argument('--device', type=str, help='cuda device to use')
+parser.add_argument('--frames', type=int, help='processing unit')
+args = parser.parse_args()
+
+if args.furniture == 'one_leg':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_oneleg_4_4.yaml'
+elif args.furniture == 'lamp':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_lamp_4_4.yaml'
+elif args.furniture == 'cabinet':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_cabinet_4_4.yaml'
+elif args.furniture == 'round_table':
+    config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_roundtable_4_4.yaml'
+
+pkl_dir = args.pkl_dir
+mean = args.mean
+std = args.std
+cuda_device = args.device
+frames_to_process = args.frames
+    
 # diffusion_4_4
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_roundtable_4_4.yaml'
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/round_table/val'
-mean = -946.7004
-std = 109.59785
+# config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/diffusion_reward_roundtable_4_4.yaml'
+# pkl_dir = '/home/dongyoon/FB_dataset/raw/low/round_table/val'
+# mean = -946.7004
+# std = 109.59785
 
 class Custom_DiffusionReward(nn.Module):
     def __init__(self, cfg):
@@ -257,13 +283,14 @@ class Custom_DiffusionReward(nn.Module):
         if self.use_expl_reward:
             metrics.update(self.expl_reward.update(batch))
         return metrics
-    
+
+print("loaading model")
 with open(config_path, 'r') as file:
     config = yaml.safe_load(file)
     config = SimpleNamespace(**config)
 reward_model = Custom_DiffusionReward(config)
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:6')
+    reward_model = reward_model.to(cuda_device)
     
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
@@ -285,7 +312,7 @@ def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W, tensor
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:6')
+    frames = torch.from_numpy(frames).float().to(cuda_device)
     return frames
 
 def extract_reward_100(combined_array, reward_model):
@@ -295,7 +322,7 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 150
+    last_idx = frames_to_process
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
         if last_frame-start_idx < 25:
@@ -310,17 +337,19 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 150
+        last_idx = start_idx + frames_to_process
     return reward_traj
 
 pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"[0-9]*success.pkl"))
+pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
 len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):
-    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
     with open(pkl_file_path, 'rb') as file:
         data = pickle.load(file) # need for modify in after code
+    if 'diffusion_reward_4/4' in data:
+        continue
+    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
     frames = pkl2frames(pkl_file_path)
     
     # if using extraction methods to prevent OOM
@@ -353,3 +382,4 @@ for i, pkl_file_path in enumerate(pkl_files):
     
     with open(pkl_file_path, 'wb') as file:
         pickle.dump(data, file)
+        
