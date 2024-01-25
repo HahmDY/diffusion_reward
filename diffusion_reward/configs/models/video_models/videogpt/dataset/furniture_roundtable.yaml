@@ -8,7 +8,7 @@ codec:
   device: cuda:7
 
 num_frames: 4
-frame_skip: 16
+frame_skip: 4
 device: cuda:7
 latent_size: 16
 epochs: 1000

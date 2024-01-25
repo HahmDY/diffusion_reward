@@ -16,9 +16,8 @@ import matplotlib.pyplot as plt
 import os
 import scipy
 
-config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_oneleg.yaml'
-train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_oneleg/low/train'
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/one_leg/train'
+config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_roundtable_4_4.yaml'
+train_set_path = '/home/dongyoon/diffusion_reward/video_dataset/furniture_roundtable/low/train'
 
 class CustomVIPER(nn.Module):
     def __init__(self, cfg):
@@ -27,7 +26,7 @@ class CustomVIPER(nn.Module):
         # load video models
         self.model_cfg = OmegaConf.load(cfg.cfg_path)
         self.model = VideoGPTTransformer(self.model_cfg)
-        self.model.load_state_dict(torch.load(cfg.ckpt_path, map_location="cuda:6"))
+        self.model.load_state_dict(torch.load(cfg.ckpt_path, map_location="cuda:7"))
         self.model.eval()
         for param in self.model.parameters(): 
             param.requires_grad = False
@@ -114,10 +113,10 @@ class CustomVIPER(nn.Module):
     @torch.no_grad()
     def calc_reward(self, imgs):
         batch_embs, batch_indices = self.imgs_to_batch(imgs, self.reward_type)
-        batch_embs = batch_embs.to('cuda:6')
-        batch_indices = batch_indices.to('cuda:6')
+        batch_embs = batch_embs.to('cuda:7')
+        batch_indices = batch_indices.to('cuda:7')
         sos_tokens = self.model.calc_sos_tokens(imgs, batch_embs).tile((batch_embs.shape[0], 1, 1))
-        sos_tokens = sos_tokens.to('cuda:6')
+        sos_tokens = sos_tokens.to('cuda:7')
 
         rewards = self.cal_log_prob(batch_embs, batch_indices, sos_tokens, target_indices=batch_indices, reward_type=self.reward_type)
         return rewards  
@@ -164,10 +163,10 @@ with open(config_path, 'r') as file:
     config = SimpleNamespace(**config)
 reward_model = CustomVIPER(config)
 if torch.cuda.is_available():
-    reward_model = reward_model.to('cuda:6')
-    reward_model.model = reward_model.model.to('cuda:6')
-    reward_model.model.transformer = reward_model.model.transformer.to('cuda:6')
-    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:6')
+    reward_model = reward_model.to('cuda:7')
+    reward_model.model = reward_model.model.to('cuda:7')
+    reward_model.model.transformer = reward_model.model.transformer.to('cuda:7')
+    reward_model.model.vqgan = reward_model.model.vqgan.to('cuda:7')
 
 def pkl2frames(pkl_path): # pkl -> T * H * W * C
     with open(pkl_path, 'rb') as file:
@@ -189,7 +188,7 @@ def process_frames(frames): # T * H * W * C -> 1 * T * C * H * W, tensor
     frames = np.expand_dims(frames, axis=0) # dim 0 for batch
     frames = frames.astype(np.float32)
     frames = frames / 127.5 - 1 # normalize to [-1, 1]
-    frames = torch.from_numpy(frames).float().to('cuda:6')
+    frames = torch.from_numpy(frames).float().to('cuda:7')
     return frames
 
 def extract_reward_100(combined_array, reward_model):
@@ -202,8 +201,8 @@ def extract_reward_100(combined_array, reward_model):
     last_idx = 150
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 100:
-            start_idx -= 100
+        if last_frame-start_idx < 30:
+            start_idx -= 30
         selected_frames = combined_array[start_idx:last_frame]
         frames = process_frames(selected_frames)
         reward = reward_model.calc_reward(frames)
@@ -234,25 +233,6 @@ for folder in subfolders:
     combined_array = np.stack(images)
     demo_len = combined_array.shape[0]
     
-    # reward_traj = np.zeros(0)
-    # start_idx = 0
-    # prev_last_idx = 0
-    # last_idx = 100
-    # while start_idx <= combined_array.shape[0]:
-    #     last_frame = min(last_idx, combined_array.shape[0])
-    #     if last_frame-start_idx < 100:
-    #         start_idx -= 100
-    #     selected_frames = combined_array[start_idx:last_frame]
-    #     frames = process_frames(selected_frames)
-    #     reward = reward_model.calc_reward(frames)
-    #     reward = reward.cpu().numpy().squeeze()
-        
-    #     reward = reward[prev_last_idx-start_idx:]
-    #     reward_traj = np.concatenate((reward_traj, reward))
-        
-    #     start_idx = last_idx - 20
-    #     prev_last_idx = last_idx
-    #     last_idx = start_idx + 100
     reward_traj = extract_reward_100(combined_array, reward_model)
     print("demolen:", combined_array.shape[0])
     print("reward:", len(reward_traj))
@@ -267,44 +247,3 @@ mean_reward = np.mean(total_reward)
 std_reward = np.std(total_reward)
 print("mean reward:", mean_reward)
 print("std reward:", std_reward)
-
-mean = mean_reward
-std = std_reward
-
-pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"[0-9]*.pkl"))
-len_files = len(pkl_files)
-
-for i, pkl_file_path in enumerate(pkl_files):
-    print("processing pkl:", i+1,"/", len_files, pkl_file_path)
-    print(mean, std)
-    with open(pkl_file_path, 'rb') as file:
-        data = pickle.load(file)
-        
-    frames = pkl2frames(pkl_file_path)
-    rewards = extract_reward_100(frames, reward_model)
-    #rewards = reward_model.calc_reward(process_frames(frames))
-    len_frames = frames.shape[0]
-    
-    reward_std = (rewards - mean) / std
-    reward_std = scipy.ndimage.gaussian_filter1d(reward_std, sigma=3,  mode="nearest")
-    
-    viper_stacked_timesteps = []
-    for i in range(len_frames):
-        timesteps = np.array([max(0, i-12), max(0, i-8), max(0, i-4), max(0, i)])
-        #timesteps = np.array([max(0, i-48), max(0, i-32), max(0, i-16), max(0, i)])
-        viper_stacked_timesteps.append(timesteps)
-    viper_stacked_timesteps = np.vstack(viper_stacked_timesteps)
-    
-    print('frame shape:', frames.shape)
-    print('reward shape:', rewards.shape)
-    print('viper_stacked_timesteps shape:', viper_stacked_timesteps.shape)
-    
-    assert len_frames == rewards.shape[0]
-    assert len_frames == viper_stacked_timesteps.shape[0]
-    
-    data['viper_reward'] = reward_std
-    data['viper_stacked_timesteps'] = viper_stacked_timesteps
-    
-    with open(pkl_file_path, 'wb') as file:
-        pickle.dump(data, file)

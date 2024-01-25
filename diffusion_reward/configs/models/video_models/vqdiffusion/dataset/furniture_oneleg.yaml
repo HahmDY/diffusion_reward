@@ -6,7 +6,7 @@ model:
   params:
     content_info: {key: image}
     condition_info: {key: frame}
-    frame_skip: 16
+    frame_skip: 4
     content_codec_config: 
       target: diffusion_reward.models.video_models.vqdiffusion.modeling.codecs.image_codec.vqgan.MiniVQGAN
       params:

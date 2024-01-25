@@ -23,9 +23,10 @@ extract rewards from pkl files and relabel
 - train_set_path
 - config_path
 - mean & std
+- cuda device
 """
 
-pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/train'
+pkl_dir = '/home/dongyoon/FB_dataset/raw/low/lamp/val'
 config_path = '/home/dongyoon/diffusion_reward/dongyoon/config/viper_lamp_4_4.yaml'
 mean = -495.09049
 std = 125.5547928
@@ -38,7 +39,7 @@ class CustomVIPER(nn.Module):
         # load video models
         self.model_cfg = OmegaConf.load(cfg.cfg_path)
         self.model = VideoGPTTransformer(self.model_cfg)
-        self.model.load_state_dict(torch.load(cfg.ckpt_path))
+        self.model.load_state_dict(torch.load(cfg.ckpt_path, map_location='cuda:7'))
         self.model.eval()
         for param in self.model.parameters(): 
             param.requires_grad = False
@@ -212,11 +213,11 @@ def extract_reward_100(combined_array, reward_model):
     reward_traj = np.zeros(0)
     start_idx = 0
     prev_last_idx = 0
-    last_idx = 200
+    last_idx = 150
     while start_idx <= combined_array.shape[0]:
         last_frame = min(last_idx, combined_array.shape[0])
-        if last_frame-start_idx < 100:
-            start_idx -= 100
+        if last_frame-start_idx < 25:
+            start_idx -= 25
         selected_frames = combined_array[start_idx:last_frame]
         frames = process_frames(selected_frames)
         reward = reward_model.calc_reward(frames)
@@ -227,11 +228,11 @@ def extract_reward_100(combined_array, reward_model):
         
         start_idx = last_idx - 20
         prev_last_idx = last_idx
-        last_idx = start_idx + 200
+        last_idx = start_idx + 150
     return reward_traj
 
 pkl_dir_path = Path(pkl_dir)
-pkl_files = list(pkl_dir_path.glob(r"[0-9]*failure.pkl"))
+pkl_files = list(pkl_dir_path.glob(r"2023-12-30-04:08:31_success.pkl"))
 len_files = len(pkl_files)
 
 for i, pkl_file_path in enumerate(pkl_files):

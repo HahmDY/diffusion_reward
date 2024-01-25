@@ -6,11 +6,11 @@ model:
   params:
     content_info: {key: image}
     condition_info: {key: frame}
-    frame_skip: 16 ####### frame_skip
+    frame_skip: 4 ####### frame_skip
     content_codec_config: 
       target: diffusion_reward.models.video_models.vqdiffusion.modeling.codecs.image_codec.vqgan.MiniVQGAN
       params:
-        args: {latent_dim: 64, device: 'cuda:7', image_channels: 3, num_codebook_vectors: 1024, beta: 0.25, channels: [128, 256, 256], resolution: 64, latent_size: 16}
+        args: {latent_dim: 64, device: 'cuda:6', image_channels: 3, num_codebook_vectors: 1024, beta: 0.25, channels: [128, 256, 256], resolution: 64, latent_size: 16}
         trainable: False
         token_shape: [16, 16]
         #config_path: 'OUTPUT/pretrained_model/taming_dvae/vqgan_imagenet_f16_16384.yaml'
